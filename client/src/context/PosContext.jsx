@@ -31,6 +31,9 @@ export function PosProvider({ children }) {
   });
   const [catalogItems, setCatalogItems] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [vouchers, setVouchers] = useState([]);
+  const [completedDocs, setCompletedDocs] = useState([]);
   const [heldDocs, setHeldDocs] = useState([]);
   const [receiptModalDoc, setReceiptModalDoc] = useState(null);
   const [toast, setToast] = useState(null);
@@ -62,15 +65,21 @@ export function PosProvider({ children }) {
         const resolvedStoreSid = bootData.stores?.[0]?.store_sid || 1;
         setActiveStoreSid(resolvedStoreSid);
 
-        const [catData, custData, heldData] = await Promise.all([
-          api.getCatalog({ storeSid: resolvedStoreSid }),
+        const [catData, custData, vendData, vouData, salesData, heldData] = await Promise.all([
+          api.getCatalog({ storeSid: resolvedStoreSid, includeInactive: true }),
           api.getCustomers(),
+          api.getVendors(),
+          api.getVouchers(resolvedStoreSid),
+          api.getDocuments({ storeSid: resolvedStoreSid, isHeld: 0 }),
           api.getDocuments({ storeSid: resolvedStoreSid, isHeld: 1 }),
         ]);
 
         setBootstrap(bootData);
         setCatalogItems(catData.items || []);
         setCustomers(custData.customers || []);
+        setVendors(vendData.vendors || []);
+        setVouchers(vouData.vouchers || []);
+        setCompletedDocs(salesData.documents || []);
         setHeldDocs(heldData.documents || []);
 
         if (bootData.workstations?.length > 0) {
@@ -127,6 +136,9 @@ export function PosProvider({ children }) {
         handleLogout,
         catalogItems,
         customers,
+        vendors,
+        vouchers,
+        completedDocs,
         heldDocs,
         receiptModalDoc,
         setReceiptModalDoc,
