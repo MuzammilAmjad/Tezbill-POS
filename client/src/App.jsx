@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PosProvider, usePos } from './context/PosContext.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import TopBar from './components/TopBar.jsx';
@@ -11,8 +11,18 @@ import LoginView from './components/LoginView.jsx';
 import ReceiptModal from './components/ReceiptModal.jsx';
 
 function PosShell() {
-  const [activeTab, setActiveTab] = useState('pos');
   const { loading, activeEmployee, receiptModalDoc, setReceiptModalDoc, toast } = usePos();
+  const isAdmin = Boolean(activeEmployee?.admin);
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'inventory' : 'pos');
+
+  useEffect(() => {
+    if (!activeEmployee) return;
+    if (isAdmin && activeTab === 'pos') {
+      setActiveTab('inventory');
+    } else if (!isAdmin && activeTab === 'audit') {
+      setActiveTab('pos');
+    }
+  }, [activeEmployee, isAdmin, activeTab]);
 
   if (loading) {
     return (
@@ -34,11 +44,11 @@ function PosShell() {
             <TopBar />
 
             <main className="flex-1 min-h-0 overflow-hidden">
-              {activeTab === 'pos' && <PosTerminalView />}
+              {!isAdmin && activeTab === 'pos' && <PosTerminalView />}
               {activeTab === 'inventory' && <InventoryView />}
               {activeTab === 'customers' && <CustomersView />}
               {activeTab === 'documents' && <DocumentsView />}
-              {activeTab === 'audit' && Boolean(activeEmployee?.admin) && <AuditLogView />}
+              {isAdmin && activeTab === 'audit' && <AuditLogView />}
             </main>
           </div>
 
