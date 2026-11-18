@@ -2,24 +2,46 @@ import React, { useState, useEffect } from 'react';
 import { PosProvider, usePos } from './context/PosContext.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import TopBar from './components/TopBar.jsx';
+import DashboardView from './components/DashboardView.jsx';
 import PosTerminalView from './components/PosTerminalView.jsx';
 import DocumentsView from './components/DocumentsView.jsx';
+import PurchasingView from './components/PurchasingView.jsx';
 import InventoryView from './components/InventoryView.jsx';
+import StockView from './components/StockView.jsx';
+import SuppliersView from './components/SuppliersView.jsx';
 import CustomersView from './components/CustomersView.jsx';
+import ProfitLossView from './components/ProfitLossView.jsx';
+import ReportsView from './components/ReportsView.jsx';
 import AuditLogView from './components/AuditLogView.jsx';
+import StoreConfigView from './components/StoreConfigView.jsx';
 import LoginView from './components/LoginView.jsx';
 import ReceiptModal from './components/ReceiptModal.jsx';
+
+const ADMIN_TABS = [
+  'dashboard',
+  'documents',
+  'purchasing',
+  'inventory',
+  'stock',
+  'suppliers',
+  'customers',
+  'profit',
+  'reports',
+  'audit',
+  'settings',
+];
+const CASHIER_TABS = ['pos', 'documents', 'inventory', 'stock', 'customers'];
 
 function PosShell() {
   const { loading, activeEmployee, receiptModalDoc, setReceiptModalDoc, toast } = usePos();
   const isAdmin = Boolean(activeEmployee?.admin);
-  const [activeTab, setActiveTab] = useState(isAdmin ? 'inventory' : 'pos');
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'dashboard' : 'pos');
 
   useEffect(() => {
     if (!activeEmployee) return;
-    if (isAdmin && activeTab === 'pos') {
-      setActiveTab('inventory');
-    } else if (!isAdmin && activeTab === 'audit') {
+    if (isAdmin && !ADMIN_TABS.includes(activeTab)) {
+      setActiveTab('dashboard');
+    } else if (!isAdmin && !CASHIER_TABS.includes(activeTab)) {
       setActiveTab('pos');
     }
   }, [activeEmployee, isAdmin, activeTab]);
@@ -44,11 +66,18 @@ function PosShell() {
             <TopBar />
 
             <main className="flex-1 min-h-0 overflow-hidden">
+              {isAdmin && activeTab === 'dashboard' && <DashboardView setActiveTab={setActiveTab} />}
               {!isAdmin && activeTab === 'pos' && <PosTerminalView />}
-              {activeTab === 'inventory' && <InventoryView />}
-              {activeTab === 'customers' && <CustomersView />}
               {activeTab === 'documents' && <DocumentsView />}
+              {isAdmin && activeTab === 'purchasing' && <PurchasingView />}
+              {activeTab === 'inventory' && <InventoryView />}
+              {activeTab === 'stock' && <StockView />}
+              {isAdmin && activeTab === 'suppliers' && <SuppliersView />}
+              {activeTab === 'customers' && <CustomersView />}
+              {isAdmin && activeTab === 'profit' && <ProfitLossView />}
+              {isAdmin && activeTab === 'reports' && <ReportsView />}
               {isAdmin && activeTab === 'audit' && <AuditLogView />}
+              {isAdmin && activeTab === 'settings' && <StoreConfigView />}
             </main>
           </div>
 
@@ -63,7 +92,7 @@ function PosShell() {
 
       {toast && (
         <div
-          className={`fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg shadow-lg border text-xs font-semibold transition-all ${
+          className={`fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg shadow-lg border text-xs font-semibold transition-all print:hidden ${
             toast.type === 'error'
               ? 'bg-rose-900 text-white border-rose-700'
               : 'bg-slate-900 text-white border-slate-700'
