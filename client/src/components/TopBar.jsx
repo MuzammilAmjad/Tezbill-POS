@@ -7,7 +7,7 @@ export default function TopBar() {
   const isAdmin = Boolean(activeEmployee?.admin);
 
   return (
-    <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0">
+    <header className="h-14 bg-white border-b border-slate-200 px-6 flex items-center justify-between shrink-0 print:hidden">
       <div className="flex items-center gap-2.5">
         <Store className="w-5 h-5 text-emerald-600" />
         <span className="font-bold text-slate-900 text-base">
