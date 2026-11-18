@@ -13,6 +13,8 @@ env/
 # Node / Frontend
 node_modules/
 dist/
+test-results/
+playwright-report/
 
 # Environment & IDE
 .env
