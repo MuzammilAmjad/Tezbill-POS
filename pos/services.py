@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import transaction
 from django.utils import timezone
@@ -160,7 +161,7 @@ def ensure_seeded(force_reset: bool = False):
             postal_code="54000",
             phone1="042-35714820",
             receipt_header="Tezbill General Store",
-            receipt_footer="Thank you for shopping with us.",
+            receipt_footer="Thank you for shopping with us. Items can be exchanged within 7 days with original receipt.",
             active=True,
         )
 
@@ -224,15 +225,28 @@ def ensure_seeded(force_reset: bool = False):
                 active=True,
             )
 
-        vendor = Vendor.objects.create(
+        vendor1 = Vendor.objects.create(
             vend_sid=1,
             sbs=sbs,
-            vend_code="VND-01",
-            vend_name="Local Wholesale Supplier",
-            contact_name="Sales Desk",
-            phone1="0300-1112233",
+            vend_code="SUP-001",
+            vend_name="Lahore Foods & Dairy Supply",
+            contact_name="Kamran Siddiqui",
+            phone1="0300-8412090",
+            address1="Industrial Area, Kot Lakhpat",
             city="Lahore",
             payment_terms="Cash",
+            active=True,
+        )
+        Vendor.objects.create(
+            vend_sid=2,
+            sbs=sbs,
+            vend_code="SUP-002",
+            vend_name="Punjab Grocery Distributors",
+            contact_name="Usman Ghani",
+            phone1="0321-4509811",
+            address1="Main Market, Gulberg III",
+            city="Lahore",
+            payment_terms="Net 15",
             active=True,
         )
 
@@ -255,7 +269,7 @@ def ensure_seeded(force_reset: bool = False):
                 item_size=size,
                 uom=uom,
                 dcs=cat,
-                vendor=vendor,
+                vendor=vendor1,
                 tax_code=tax_zero,
                 cost=round_money(cost),
                 min_ord_qty=Decimal("5.00"),
@@ -312,6 +326,45 @@ def ensure_seeded(force_reset: bool = False):
             active=True,
         )
 
+        # Sample Receiving Voucher (Purchase)
+        vou = Voucher.objects.create(
+            vou_sid=1,
+            vou_no="PUR-01-00001",
+            vou_type=0,
+            sbs=sbs,
+            store=store,
+            vendor=vendor1,
+            pkg_no="PKG-101",
+            vendor_invoice_no="LFD-001",
+            vou_subtotal=Decimal("11200.00"),
+            vou_total=Decimal("11200.00"),
+            status=3,
+            notes="Initial dairy and bakery stock purchase",
+            created_by=emp_admin,
+        )
+        m_item = created_items["1001"]
+        b_item = created_items["1002"]
+        VouItem.objects.create(
+            voucher=vou,
+            item_pos=1,
+            item=m_item,
+            qty=Decimal("30"),
+            orig_qty=Decimal("30"),
+            cost=Decimal("260.00"),
+            price=Decimal("300.00"),
+            ext_cost=Decimal("7800.00"),
+        )
+        VouItem.objects.create(
+            voucher=vou,
+            item_pos=2,
+            item=b_item,
+            qty=Decimal("20"),
+            orig_qty=Decimal("20"),
+            cost=Decimal("170.00"),
+            price=Decimal("200.00"),
+            ext_cost=Decimal("3400.00"),
+        )
+
         zout = ZoutControl.objects.create(
             zout_sid=1,
             zout_no="SHIFT-01",
@@ -357,8 +410,6 @@ def ensure_seeded(force_reset: bool = False):
             given_amt=Decimal("0.00"),
             fbr_invoice_no="FBR-01-20261118-0001",
         )
-        m_item = created_items["1001"]
-        b_item = created_items["1002"]
         DocumentItem.objects.create(
             document=doc,
             item_pos=1,
@@ -406,6 +457,13 @@ def ensure_seeded(force_reset: bool = False):
             "STORE_INITIALIZED",
             "MAIN-01",
             "Store initialized with 5 catalog products and Rs. 5,000 opening float",
+            store=store,
+        )
+        record_audit(
+            emp_admin,
+            "PURCHASE_RECORDED",
+            "PUR-01-00001",
+            "Received stock purchase of Rs. 11,200 from Lahore Foods & Dairy Supply",
             store=store,
         )
         record_audit(
