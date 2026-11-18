@@ -51,7 +51,7 @@ export default function AuditLogView() {
         <div>
           <div className="flex items-center gap-2">
             <ShieldCheck className="w-5 h-5 text-emerald-600" />
-            <h1 className="text-lg font-bold text-slate-900">System Activity Audit Log (Main Admin Only)</h1>
+            <h1 className="text-lg font-bold text-slate-900">Audit Log</h1>
           </div>
           <p className="text-xs text-slate-500 mt-0.5">
             Complete record of every login, sale bill, stock update, and product change across all operators
