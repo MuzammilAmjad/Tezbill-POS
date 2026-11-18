@@ -1,16 +1,52 @@
 # Tezbill POS
 
-Tezbill is a Point of Sale (POS) and retail store management system built with **Django**, **MySQL**, and **React** for Pakistani retail shops, supermarkets, and multi-branch merchants. Its relational database schema is modeled after the Retail Pro Prism 2.0 specification (`subsidiary`, `store`, `workstation`, `dcs`, `vendor`, `invn_sbs_item`, `invn_sbs_price`, `invn_sbs_item_qty`, `customer`, `document`, `document_item`, `tender`, `po`, `po_item`, `voucher`, `vou_item`, `adjustment`, `adj_item`, `drawer_event`, and `zout_control`).
+Tezbill is a Point of Sale (POS) and retail store management system built with **Django**, **MySQL**, and **React** for retail shops in Pakistan. Its relational data model is derived from the Retail Pro Prism 2.0 database specification (`subsidiary`, `store`, `workstation`, `dcs`, `vendor`, `invn_sbs_item`, `invn_sbs_price`, `invn_sbs_item_qty`, `customer`, `document`, `document_item`, `tender`, `zout_control`, `drawer_event`, and `audit_log`).
 
-## Core Capabilities
+---
 
-- **POS Register Terminal**: Barcode (`UPC`) and alternate lookup (`ALU`) scanning, DCS category filtering, multi-tier price levels (`Retail`, `Wholesale`, `Corporate / Staff`), line-item and invoice-level discounts, and held/parked receipts (`is_held`).
-- **Pakistani Retail & Fiscal Support**: Native `PKR` (`Rs.`) currency handling with standard Pakistani note and coin denominations (`Rs. 5000` down to `Rs. 1`), configurable GST tax codes (`18% Standard GST`, `5% Reduced GST`, `Zero Rated`, `Tax Exempt`), store `NTN`/`STRN` registration numbers, FBR invoice numbering, and 80mm thermal receipt print formatting.
-- **Local Payment Tenders**: Support for `Cash (PKR)`, `Debit / Credit Card`, `JazzCash Wallet`, `Easypaisa Wallet`, `Raast / Bank Transfer`, and `Customer Credit Account` with credit limit validation.
-- **Inventory & Merchandising**: Multi-store stock tracking (`invn_sbs_item_qty`), low-stock reorder alerts, DCS (`Department / Class / Subclass`) hierarchy management, and audited stock quantity adjustments (`adjustment` and `adj_item`).
-- **Procurement & Receiving**: Vendor management (`vendor`), purchase order creation (`po` and `po_item`), and receiving vouchers (`voucher` and `vou_item`) that automatically increment on-hand stock and update item cost.
-- **Customers & Credit Ledger**: Customer directory (`customer`), credit limit enforcement, outstanding balance settlement, loyalty point accrual, and customer invoice history.
-- **Cash Drawer & Z-Out Shift Control**: Shift opening floats, non-sale cash movements (`PAID_IN`, `PAID_OUT`, `CASH_DROP`), and end-of-shift `Z-Out` reconciliation with a denomination counter and over/short variance calculation.
+## Application Walkthrough & Screenshots
+
+### 1. Operator Sign-In
+Operators authenticate using their assigned username and PIN code. The system enforces role-based access between **Cashier** counter billing and **Main Admin** store oversight.
+
+![Sign-In Screen](docs/screenshots/01-login.png)
+
+---
+
+### 2. Cashier — POS Counter Billing (`New Sale`)
+Cashiers can search products by name, code, or barcode, filter by category (`Dairy & Bakery`, `Beverages`, `Grocery`), adjust item quantities, apply bill discounts, select a customer, and complete checkout via **Cash**, **Card**, **JazzCash**, or **Easypaisa** with automatic change calculation in `PKR` (`Rs.`).
+
+![POS Counter Billing](docs/screenshots/02-pos-billing.png)
+
+---
+
+### 3. Printable Sale Invoice Receipt
+Completing a sale generates a sequential invoice (`INV-01-XXXXX`), deducts sold quantities from store stock (`invn_sbs_item_qty`), updates shift drawer totals (`zout_control`), and opens a print-ready invoice receipt formatted for physical printing or PDF export.
+
+![Sale Invoice Receipt](docs/screenshots/03-sale-receipt.png)
+
+---
+
+### 4. Admin — Products & Stock Management
+Store administrators can add new products, edit cost and selling prices (`invn_sbs_price`), and update physical stock quantities (`adjustment` / `invn_sbs_item_qty`).
+
+![Products and Stock](docs/screenshots/04-products-stock.png)
+
+---
+
+### 5. Sales History & Store Summary
+Displays real-time store KPIs (**Total Sales**, **Total Bills**, **Total Products**, and **Cash in Drawer**) alongside a searchable ledger of completed sales bills with one-click receipt reprinting.
+
+![Sales History and Summary](docs/screenshots/05-sales-history.png)
+
+---
+
+### 6. Main Admin — System Activity Audit Log
+Accessible exclusively to the **Main Admin**, the Audit Log records every user sign-in, sign-out, completed sale, product change, stock adjustment, and customer registration with timestamps and operator attribution.
+
+![Audit Log](docs/screenshots/06-audit-log.png)
+
+---
 
 ## Technology Stack
 
@@ -21,19 +57,19 @@ Tezbill is a Point of Sale (POS) and retail store management system built with *
   - Schema Documentation: [`docs/schema-reference.md`](docs/schema-reference.md)
 - **Frontend**: React 19, Vite 6, Tailwind CSS 4, Lucide Icons
 
+---
+
 ## Getting Started
 
 ### 1. MySQL Database Setup
 
-Create the MySQL database (or run the full DDL script directly):
+Create the MySQL database or import the standalone DDL schema:
 
 ```sql
 CREATE DATABASE IF NOT EXISTS tezbill_db
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_unicode_ci;
 ```
-
-Or import the standalone MySQL schema directly:
 
 ```bash
 mysql -u root -p < database/mysql_schema.sql
@@ -52,14 +88,12 @@ DB_PORT=3306
 
 ### 2. Install Dependencies
 
-Install the Python and frontend packages:
-
 ```bash
 pip install -r requirements.txt
 npm install
 ```
 
-### 3. Run Migrations & Seed Retail Data
+### 3. Run Migrations & Seed Data
 
 ```bash
 python manage.py migrate
@@ -68,29 +102,25 @@ python manage.py seed_tezbill
 
 ### 4. Start the Application
 
-Run both the Django API server (`http://127.0.0.1:8000`) and Vite frontend (`http://localhost:5173`):
-
 ```bash
 npm run dev
 ```
 
-Or run them separately:
+- **POS Web Application**: `http://localhost:5173`
+- **Django REST API**: `http://127.0.0.1:8000/api/health`
+- **Django Admin**: `http://127.0.0.1:8000/admin`
 
-```bash
-python manage.py runserver 8000
-npm run dev:web
-```
-
-### 5. Run Tests
+### 5. Run Automated Tests
 
 ```bash
 python manage.py test
 ```
 
-## Default Operator Accounts
+---
 
-| Employee Name | Username | PIN Code | Role | Max Discount |
+## Default Accounts
+
+| Full Name | Username | PIN Code | Role | Permissions |
 | :--- | :--- | :--- | :--- | :--- |
-| Hamza Tariq | `htariq` | `1111` | Store Manager | `25%` |
-| Bilal Ahmed | `bahmed` | `2222` | Senior Cashier | `10%` |
-| Zainab Raza | `zraza` | `3333` | Inventory Supervisor | `15%` |
+| Hamza Tariq | `admin` | `1111` | `Main Admin` | Products & Stock, Customers, Sales History, Audit Log |
+| Bilal Ahmed | `cashier` | `2222` | `Cashier` | New Sale (POS), Products & Stock, Customers, Sales History |
