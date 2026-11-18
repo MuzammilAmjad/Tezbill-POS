@@ -14,7 +14,7 @@ export default function Sidebar({ activeTab, setActiveTab }) {
   ];
 
   if (isAdmin) {
-    navItems.push({ id: 'audit', label: 'Audit Log (Admin)', icon: ShieldCheck });
+    navItems.push({ id: 'audit', label: 'Audit Log', icon: ShieldCheck });
   }
 
   return (
