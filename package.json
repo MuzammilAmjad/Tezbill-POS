@@ -11,7 +11,9 @@
     "build": "vite build --config client/vite.config.js",
     "migrate": "python manage.py migrate",
     "seed": "python manage.py seed_tezbill",
-    "test": "python manage.py test"
+    "test": "python manage.py test",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "lucide-react": "^0.475.0",
@@ -19,6 +21,7 @@
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/vite": "^4.0.6",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
