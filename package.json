@@ -1,0 +1,28 @@
+{
+  "name": "tezbill",
+  "version": "1.2.0",
+  "description": "Tezbill Point of Sale and retail management system built with Django, MySQL, and React",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n django,web -c blue,green \"python manage.py runserver 8000\" \"vite --config client/vite.config.js\"",
+    "dev:api": "python manage.py runserver 8000",
+    "dev:web": "vite --config client/vite.config.js",
+    "build": "vite build --config client/vite.config.js",
+    "migrate": "python manage.py migrate",
+    "seed": "python manage.py seed_tezbill",
+    "test": "python manage.py test"
+  },
+  "dependencies": {
+    "lucide-react": "^0.475.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.6",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "tailwindcss": "^4.0.6",
+    "vite": "^6.1.0"
+  }
+}
