@@ -136,5 +136,8 @@ test.describe('Tezbill POS Full End-to-End Feature Suite', () => {
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
     await page.getByRole('button', { name: /Save Settings/i }).click();
     await expect(page.getByText('Store settings saved')).toBeVisible();
+
+    // Keep the final screen visible for a moment before the browser closes
+    await page.waitForTimeout(4000);
   });
 });
