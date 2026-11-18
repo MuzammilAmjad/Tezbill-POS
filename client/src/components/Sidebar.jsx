@@ -6,16 +6,19 @@ export default function Sidebar({ activeTab, setActiveTab }) {
   const { activeEmployee, handleLogout } = usePos();
   const isAdmin = Boolean(activeEmployee?.admin);
 
-  const navItems = [
-    { id: 'pos', label: 'New Sale (POS)', icon: ShoppingCart },
-    { id: 'inventory', label: 'Products & Stock', icon: Package },
-    { id: 'customers', label: 'Customers', icon: Users },
-    { id: 'documents', label: 'Sales History', icon: FileText },
-  ];
-
-  if (isAdmin) {
-    navItems.push({ id: 'audit', label: 'Audit Log', icon: ShieldCheck });
-  }
+  const navItems = isAdmin
+    ? [
+        { id: 'inventory', label: 'Products & Stock', icon: Package },
+        { id: 'customers', label: 'Customers', icon: Users },
+        { id: 'documents', label: 'Sales History', icon: FileText },
+        { id: 'audit', label: 'Audit Log', icon: ShieldCheck },
+      ]
+    : [
+        { id: 'pos', label: 'New Sale (POS)', icon: ShoppingCart },
+        { id: 'inventory', label: 'Products & Stock', icon: Package },
+        { id: 'customers', label: 'Customers', icon: Users },
+        { id: 'documents', label: 'Sales History', icon: FileText },
+      ];
 
   return (
     <aside className="w-60 bg-slate-900 text-slate-200 flex flex-col border-r border-slate-800 shrink-0 select-none">
