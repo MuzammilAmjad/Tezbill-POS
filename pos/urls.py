@@ -1,0 +1,32 @@
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("health", views.health_view, name="api_health"),
+    path("auth/employees", views.employees_view, name="api_employees"),
+    path("auth/login", views.login_view, name="api_login"),
+    path("auth/logout", views.logout_view, name="api_logout"),
+    path("audit-logs", views.audit_logs_view, name="api_audit_logs"),
+    path("settings/bootstrap", views.bootstrap_view, name="api_bootstrap"),
+    path("settings/stores/<int:store_sid>", views.update_store_view, name="api_update_store"),
+    path("catalog/items", views.catalog_items_view, name="api_catalog_items"),
+    path("catalog/items/<int:item_sid>", views.catalog_item_detail_view, name="api_catalog_item_detail"),
+    path("catalog/lookup", views.catalog_lookup_view, name="api_catalog_lookup"),
+    path("catalog/dcs", views.catalog_dcs_view, name="api_catalog_dcs"),
+    path("catalog/adjustments", views.catalog_adjustments_view, name="api_catalog_adjustments"),
+    path("documents", views.documents_view, name="api_documents"),
+    path("documents/<int:doc_sid>", views.document_detail_view, name="api_document_detail"),
+    path("documents/<int:doc_sid>/held", views.delete_held_document_view, name="api_delete_held_document"),
+    path("customers", views.customers_view, name="api_customers"),
+    path("customers/<int:cust_sid>", views.customer_detail_view, name="api_customer_detail"),
+    path("customers/<int:cust_sid>/history", views.customer_history_view, name="api_customer_history"),
+    path("customers/<int:cust_sid>/credit-payment", views.customer_credit_payment_view, name="api_customer_credit_payment"),
+    path("purchasing/vendors", views.vendors_view, name="api_vendors"),
+    path("purchasing/pos", views.purchase_orders_view, name="api_purchase_orders"),
+    path("purchasing/vouchers", views.vouchers_view, name="api_vouchers"),
+    path("register/status", views.register_status_view, name="api_register_status"),
+    path("register/open", views.register_open_view, name="api_register_open"),
+    path("register/event", views.register_event_view, name="api_register_event"),
+    path("register/close", views.register_close_view, name="api_register_close"),
+    path("reports/summary", views.reports_summary_view, name="api_reports_summary"),
+]
