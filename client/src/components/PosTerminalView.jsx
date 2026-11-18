@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
   Plus,
@@ -10,6 +10,8 @@ import {
   Smartphone,
   CheckCircle,
   ShoppingBag,
+  PauseCircle,
+  PlayCircle,
 } from 'lucide-react';
 import { usePos } from '../context/PosContext.jsx';
 import { api } from '../api/client.js';
@@ -30,6 +32,7 @@ export default function PosTerminalView() {
     activeEmployee,
     catalogItems,
     customers,
+    heldDocs,
     setReceiptModalDoc,
     notify,
     refreshAll,
@@ -42,9 +45,27 @@ export default function PosTerminalView() {
   const [discountAmount, setDiscountAmount] = useState('');
   const [tenderType, setTenderType] = useState('CASH');
   const [cashReceived, setCashReceived] = useState('');
+  const [recalledHeldSid, setRecalledHeldSid] = useState(null);
+  const [showHeldList, setShowHeldList] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const searchRef = useRef(null);
+
+  useEffect(() => {
+    const onKeyDown = (e) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  const activeCatalog = useMemo(
+    () => catalogItems.filter((item) => Boolean(item.active)),
+    [catalogItems]
+  );
 
   const addItemToCart = (item) => {
     if (Number(item.qty_on_hand) <= 0) {
@@ -87,7 +108,7 @@ export default function PosTerminalView() {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return;
 
-    const match = catalogItems.find(
+    const match = activeCatalog.find(
       (i) => i.upc.toLowerCase() === q || i.alu.toLowerCase() === q
     );
     if (match) {
@@ -116,8 +137,15 @@ export default function PosTerminalView() {
     );
   };
 
+  const updateUnitPrice = (itemSid, nextPrice) => {
+    const val = nextPrice === '' ? 0 : Math.max(0, Number(nextPrice));
+    setCart((prev) =>
+      prev.map((c) => (c.item_sid === itemSid ? { ...c, price: val } : c))
+    );
+  };
+
   const filteredItems = useMemo(() => {
-    return catalogItems.filter((item) => {
+    return activeCatalog.filter((item) => {
       if (selectedCategory && String(item.dcs_sid) !== String(selectedCategory)) return false;
       if (!searchQuery.trim()) return true;
       const q = searchQuery.trim().toLowerCase();
@@ -127,7 +155,7 @@ export default function PosTerminalView() {
         item.upc.toLowerCase().includes(q)
       );
     });
-  }, [catalogItems, selectedCategory, searchQuery]);
+  }, [activeCatalog, selectedCategory, searchQuery]);
 
   const subtotal = useMemo(
     () => cart.reduce((sum, item) => sum + item.price * item.qty, 0),
@@ -136,7 +164,8 @@ export default function PosTerminalView() {
 
   const discVal = Math.max(0, Math.min(subtotal, Number(discountAmount || 0)));
   const grandTotal = Math.max(0, subtotal - discVal);
-  const effectiveCash = tenderType === 'CASH' && cashReceived !== '' ? Number(cashReceived) : grandTotal;
+  const effectiveCash =
+    tenderType === 'CASH' && cashReceived !== '' ? Number(cashReceived) : grandTotal;
   const changeDue = Math.max(0, effectiveCash - grandTotal);
 
   const clearBill = () => {
@@ -144,15 +173,16 @@ export default function PosTerminalView() {
     setDiscountAmount('');
     setCashReceived('');
     setTenderType('CASH');
+    setRecalledHeldSid(null);
     searchRef.current?.focus();
   };
 
-  const handleCompleteSale = async () => {
+  const handleSubmitSale = async (isHeld = false) => {
     if (cart.length === 0) {
       notify('Please add at least one product to the bill', 'error');
       return;
     }
-    if (tenderType === 'CASH' && effectiveCash < grandTotal) {
+    if (!isHeld && tenderType === 'CASH' && effectiveCash < grandTotal) {
       notify('Cash received is less than the total bill amount', 'error');
       return;
     }
@@ -166,7 +196,8 @@ export default function PosTerminalView() {
         cashier_sid: activeEmployee?.empl_sid || 1,
         price_lvl_sid: 1,
         receipt_type: 0,
-        is_held: 0,
+        is_held: isHeld ? 1 : 0,
+        held_doc_sid: recalledHeldSid,
         bt_cuid: Number(selectedCustomerSid) || 1,
         disc_amt: discVal,
         items: cart.map((c) => ({
@@ -174,24 +205,61 @@ export default function PosTerminalView() {
           qty: c.qty,
           orig_price: c.price,
         })),
-        tenders: [
-          {
-            tender_type: tenderType,
-            tender_name: methodLabel,
-            amount: grandTotal,
-            taken: effectiveCash,
-          },
-        ],
+        tenders: isHeld
+          ? []
+          : [
+              {
+                tender_type: tenderType,
+                tender_name: methodLabel,
+                amount: grandTotal,
+                taken: effectiveCash,
+              },
+            ],
       });
 
       await refreshAll(activeStoreSid);
       clearBill();
-      notify(`Sale completed (${res.document.doc_no})`);
-      setReceiptModalDoc(res.document);
+      if (isHeld) {
+        notify(`Sale held as ${res.document.doc_no}`);
+      } else {
+        notify(`Sale completed (${res.document.doc_no})`);
+        setReceiptModalDoc(res.document);
+      }
     } catch (err) {
       notify(err.message, 'error');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleRecallHeld = (doc) => {
+    const restored = (doc.items || []).map((di) => {
+      const cat = catalogItems.find((i) => i.item_sid === di.item_sid);
+      return {
+        item_sid: di.item_sid,
+        alu: di.alu,
+        upc: di.scan_upc,
+        description1: di.description1,
+        qty_on_hand: cat ? Number(cat.qty_on_hand) : 99,
+        qty: Number(di.qty),
+        price: Number(di.price),
+      };
+    });
+    setCart(restored);
+    setSelectedCustomerSid(doc.bt_cuid || 1);
+    setDiscountAmount(doc.total_discount_amt ? String(doc.total_discount_amt) : '');
+    setRecalledHeldSid(doc.doc_sid);
+    setShowHeldList(false);
+    notify(`Resumed held sale ${doc.doc_no}`);
+  };
+
+  const handleDiscardHeld = async (docSid) => {
+    try {
+      await api.deleteHeldDocument(docSid);
+      await refreshAll(activeStoreSid);
+      notify('Held sale discarded');
+    } catch (err) {
+      notify(err.message, 'error');
     }
   };
 
@@ -200,17 +268,30 @@ export default function PosTerminalView() {
       {/* Left Side: Product Selection */}
       <div className="flex-1 flex flex-col bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
         <div className="p-4 border-b border-slate-200 space-y-3 bg-slate-50/50">
-          <form onSubmit={handleSearchSubmit} className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              ref={searchRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search product by name, code, or scan barcode..."
-              className="w-full pl-10 pr-4 py-2.5 bg-white rounded-lg border border-slate-300 text-sm focus:outline-none focus:border-emerald-600"
-            />
-          </form>
+          <div className="flex items-center gap-2.5">
+            <form onSubmit={handleSearchSubmit} className="relative flex-1">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                ref={searchRef}
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search product by name, code, or scan barcode (Press F2)..."
+                className="w-full pl-10 pr-4 py-2 bg-white rounded-lg border border-slate-300 text-sm focus:outline-none focus:border-emerald-600"
+              />
+            </form>
+
+            {heldDocs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowHeldList(!showHeldList)}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 text-xs font-bold cursor-pointer"
+              >
+                <PlayCircle className="w-4 h-4 text-amber-700" />
+                Resume Held ({heldDocs.length})
+              </button>
+            )}
+          </div>
 
           <div className="flex items-center gap-2 overflow-x-auto">
             <button
@@ -222,7 +303,7 @@ export default function PosTerminalView() {
                   : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-100'
               }`}
             >
-              All Products ({catalogItems.length})
+              All Products ({activeCatalog.length})
             </button>
             {bootstrap.dcsCategories.map((cat) => (
               <button
@@ -241,6 +322,44 @@ export default function PosTerminalView() {
           </div>
         </div>
 
+        {/* Held Bills Drawer */}
+        {showHeldList && heldDocs.length > 0 && (
+          <div className="p-3 bg-amber-50 border-b border-amber-200 space-y-2">
+            <div className="text-xs font-bold text-amber-900">Held Sales Waiting for Checkout</div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {heldDocs.map((h) => (
+                <div
+                  key={h.doc_sid}
+                  className="bg-white p-2.5 rounded-lg border border-amber-200 flex items-center justify-between text-xs"
+                >
+                  <div>
+                    <div className="font-bold text-slate-900">
+                      {h.doc_no} &bull; {formatPKR(h.transaction_total_amt)}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {h.bt_first_name} {h.bt_last_name} ({h.items?.length || 0} items)
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleRecallHeld(h)}
+                      className="px-2.5 py-1 rounded bg-emerald-600 text-white font-semibold cursor-pointer"
+                    >
+                      Resume
+                    </button>
+                    <button
+                      onClick={() => handleDiscardHeld(h.doc_sid)}
+                      className="p-1 text-rose-600 hover:bg-rose-50 rounded cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="flex-1 p-4 overflow-y-auto">
           {filteredItems.length === 0 ? (
             <div className="h-48 flex flex-col items-center justify-center text-slate-400 text-sm">
@@ -250,6 +369,7 @@ export default function PosTerminalView() {
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               {filteredItems.map((item) => {
                 const outOfStock = Number(item.qty_on_hand) <= 0;
+                const lowStock = Number(item.qty_on_hand) <= Number(item.min_qty);
                 return (
                   <button
                     key={item.item_sid}
@@ -263,10 +383,14 @@ export default function PosTerminalView() {
                   >
                     <div>
                       <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-                        <span>Code: {item.alu}</span>
+                        <span className="font-mono">Code: {item.alu}</span>
                         <span
-                          className={`font-medium ${
-                            outOfStock ? 'text-rose-600' : 'text-emerald-700'
+                          className={`font-semibold ${
+                            outOfStock
+                              ? 'text-rose-600'
+                              : lowStock
+                              ? 'text-amber-700'
+                              : 'text-emerald-700'
                           }`}
                         >
                           {outOfStock ? 'Out of stock' : `${item.qty_on_hand} in stock`}
@@ -282,7 +406,7 @@ export default function PosTerminalView() {
                       <span className="font-bold text-base text-emerald-700">
                         {formatPKR(item.retail_price)}
                       </span>
-                      <span className="text-xs text-emerald-600 font-medium">+ Add</span>
+                      <span className="text-xs text-emerald-600 font-semibold">+ Add</span>
                     </div>
                   </button>
                 );
@@ -293,11 +417,14 @@ export default function PosTerminalView() {
       </div>
 
       {/* Right Side: Current Bill */}
-      <div className="w-full lg:w-[420px] bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
+      <div className="w-full lg:w-[440px] bg-white rounded-xl border border-slate-200 shadow-xs flex flex-col shrink-0 overflow-hidden">
         <div className="px-5 py-3.5 bg-slate-900 text-white flex items-center justify-between">
           <div className="flex items-center gap-2">
             <ShoppingBag className="w-4 h-4 text-emerald-400" />
             <span className="font-semibold text-sm">Current Bill</span>
+            <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">
+              {cart.reduce((a, c) => a + c.qty, 0)} items
+            </span>
           </div>
           {cart.length > 0 && (
             <button
@@ -336,45 +463,53 @@ export default function PosTerminalView() {
             </div>
           ) : (
             cart.map((item) => (
-              <div key={item.item_sid} className="p-3.5 flex items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
+              <div key={item.item_sid} className="p-3.5 space-y-2">
+                <div className="flex items-center justify-between gap-2">
                   <div className="font-semibold text-sm text-slate-900 truncate">
                     {item.description1}
                   </div>
-                  <div className="text-xs text-slate-500">
-                    {formatPKR(item.price)} each
+                  <div className="font-bold text-sm text-slate-900 shrink-0">
+                    {formatPKR(item.price * item.qty)}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => updateQty(item.item_sid, item.qty - 1)}
-                    className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
-                  >
-                    <Minus className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="w-8 text-center font-bold text-sm">{item.qty}</span>
-                  <button
-                    type="button"
-                    onClick={() => updateQty(item.item_sid, item.qty + 1)}
-                    className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-slate-500">Unit Rs.</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={item.price}
+                      onChange={(e) => updateUnitPrice(item.item_sid, e.target.value)}
+                      className="w-20 px-2 py-1 rounded border border-slate-300 font-semibold text-slate-800"
+                    />
+                  </div>
 
-                <div className="w-20 text-right font-bold text-sm text-slate-900">
-                  {formatPKR(item.price * item.qty)}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => updateQty(item.item_sid, item.qty - 1)}
+                      className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="w-8 text-center font-bold text-sm">{item.qty}</span>
+                    <button
+                      type="button"
+                      onClick={() => updateQty(item.item_sid, item.qty + 1)}
+                      className="w-7 h-7 rounded-lg border border-slate-300 flex items-center justify-center hover:bg-slate-100 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateQty(item.item_sid, 0)}
+                      className="p-1 text-slate-400 hover:text-rose-600 ml-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={() => updateQty(item.item_sid, 0)}
-                  className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
               </div>
             ))
           )}
@@ -453,15 +588,26 @@ export default function PosTerminalView() {
             </div>
           )}
 
-          <button
-            type="button"
-            disabled={submitting || cart.length === 0}
-            onClick={handleCompleteSale}
-            className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-xs disabled:opacity-50 cursor-pointer"
-          >
-            <CheckCircle className="w-4 h-4" />
-            {submitting ? 'Saving Bill...' : `Complete Sale (${formatPKR(grandTotal)})`}
-          </button>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              disabled={submitting || cart.length === 0}
+              onClick={() => handleSubmitSale(true)}
+              className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-xl border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs disabled:opacity-50 cursor-pointer"
+            >
+              <PauseCircle className="w-4 h-4" />
+              Hold Sale
+            </button>
+            <button
+              type="button"
+              disabled={submitting || cart.length === 0}
+              onClick={() => handleSubmitSale(false)}
+              className="col-span-2 flex items-center justify-center gap-2 py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm shadow-xs disabled:opacity-50 cursor-pointer"
+            >
+              <CheckCircle className="w-4 h-4" />
+              {submitting ? 'Saving Bill...' : `Complete Sale (${formatPKR(grandTotal)})`}
+            </button>
+          </div>
         </div>
       </div>
     </div>
