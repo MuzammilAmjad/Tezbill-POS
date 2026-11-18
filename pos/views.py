@@ -158,6 +158,7 @@ def serialize_catalog_item(item: InvnSbsItem, store_sid: int):
         "retail_price": to_float(retail_val or Decimal("0.00")),
         "wholesale_price": to_float(price_map.get(2, retail_val or Decimal("0.00"))),
         "staff_price": to_float(price_map.get(3, retail_val or Decimal("0.00"))),
+        "active": 1 if item.active else 0,
     }
 
 
@@ -347,9 +348,29 @@ def logout_view(request):
     return JsonResponse({"logged_out": True})
 
 
+@csrf_exempt
+def change_pin_view(request):
+    if request.method != "POST":
+        return error_response("Method not allowed", 405)
+    data = parse_json(request)
+    emp = resolve_employee(data.get("empl_sid"))
+    current_pin = str(data.get("current_pin") or "").strip()
+    new_pin = str(data.get("new_pin") or "").strip()
+
+    if not emp or emp.pin_code != current_pin:
+        return error_response("Current PIN code is incorrect", 400)
+    if len(new_pin) < 4:
+        return error_response("New PIN code must be at least 4 characters", 400)
+
+    emp.pin_code = new_pin
+    emp.save()
+    record_audit(emp, "PIN_UPDATED", emp.user_name, f"{emp.full_name} updated operator PIN code", store=emp.base_store)
+    return JsonResponse({"updated": True})
+
+
 def audit_logs_view(request):
     ensure_seeded()
-    logs = AuditLog.objects.all()[:150]
+    logs = AuditLog.objects.all()[:200]
     return JsonResponse(
         {
             "logs": [
@@ -519,6 +540,8 @@ def update_store_view(request, store_sid: int):
         return error_response("Store name, address, city, and phone are required", 400)
 
     store.save()
+    emp = resolve_employee(data.get("updated_by"))
+    record_audit(emp, "SETTINGS_UPDATED", store.store_code, f'Updated store settings for "{store.store_name}"', store=store)
     return JsonResponse({"store": serialize_store(store)})
 
 
@@ -531,10 +554,14 @@ def catalog_items_view(request):
         search = str(request.GET.get("search") or "").strip()
         dcs_sid = request.GET.get("dcs_sid")
         low_stock = str(request.GET.get("low_stock") or "").lower() in ("1", "true")
+        include_inactive = str(request.GET.get("include_inactive") or "").lower() in ("1", "true")
 
-        qs = InvnSbsItem.objects.filter(active=True).select_related("dcs", "vendor", "tax_code").prefetch_related(
+        qs = InvnSbsItem.objects.select_related("dcs", "vendor", "tax_code").prefetch_related(
             "quantities", "prices__price_level"
         )
+        if not include_inactive:
+            qs = qs.filter(active=True)
+
         if search:
             qs = qs.filter(
                 Q(alu__icontains=search)
@@ -576,13 +603,13 @@ def catalog_items_view(request):
                 description2=str(data.get("description2") or "").strip(),
                 attribute=str(data.get("attribute") or "").strip(),
                 item_size=str(data.get("item_size") or "").strip(),
-                uom=str(data.get("uom") or "EA").strip(),
+                uom=str(data.get("uom") or "PKT").strip(),
                 dcs_id=int(dcs_sid),
                 vendor_id=int(data["vend_sid"]) if data.get("vend_sid") else None,
                 tax_code=tax_obj,
                 cost=round_money(data.get("cost") or 0),
                 min_ord_qty=round_money(data.get("min_qty") or 5),
-                active=True,
+                active=bool(data.get("active", True)),
             )
 
             r_price = round_money(retail_price)
@@ -608,7 +635,7 @@ def catalog_items_view(request):
                 emp,
                 "PRODUCT_ADDED",
                 item.alu,
-                f'Added product "{item.description1}" (Price: Rs. {r_price}, Opening Stock: {init_qty})',
+                f'Added product "{item.description1}" (Cost: Rs. {item.cost}, Selling Price: Rs. {r_price}, Opening Stock: {init_qty})',
                 store=store,
             )
 
@@ -643,6 +670,11 @@ def catalog_item_detail_view(request, item_sid: int):
             item.vendor_id = int(data["vend_sid"]) if data["vend_sid"] else None
         if data.get("cost") is not None:
             item.cost = round_money(data["cost"])
+        if data.get("min_qty") is not None:
+            item.min_ord_qty = round_money(data["min_qty"])
+            InvnSbsItemQty.objects.filter(item=item, store=store).update(min_qty=round_money(data["min_qty"]))
+        if "active" in data:
+            item.active = bool(data["active"])
         item.save()
 
         if data.get("retail_price") is not None:
@@ -658,7 +690,7 @@ def catalog_item_detail_view(request, item_sid: int):
             emp,
             "PRODUCT_UPDATED",
             item.alu,
-            f'Updated product details for "{item.description1}" (Price: Rs. {data.get("retail_price")})',
+            f'Updated product "{item.description1}" (Cost: Rs. {item.cost}, Price: Rs. {data.get("retail_price")})',
             store=store,
         )
 
@@ -668,6 +700,139 @@ def catalog_item_detail_view(request, item_sid: int):
         .get(item_sid=item_sid)
     )
     return JsonResponse({"item": serialize_catalog_item(item_refreshed, store.store_sid)})
+
+
+@csrf_exempt
+def catalog_item_active_view(request, item_sid: int):
+    if request.method != "PATCH":
+        return error_response("Method not allowed", 405)
+    item = InvnSbsItem.objects.filter(item_sid=item_sid).first()
+    if not item:
+        return error_response("Product not found", 404)
+    data = parse_json(request)
+    item.active = bool(data.get("active", not item.active))
+    item.save()
+    emp = resolve_employee(data.get("updated_by"))
+    status_word = "Activated" if item.active else "Deactivated"
+    record_audit(emp, "PRODUCT_STATUS", item.alu, f'{status_word} product "{item.description1}"')
+    return JsonResponse({"item_sid": item.item_sid, "active": 1 if item.active else 0})
+
+
+@csrf_exempt
+def catalog_bulk_prices_view(request):
+    if request.method != "PUT":
+        return error_response("Method not allowed", 405)
+    data = parse_json(request)
+    updates = data.get("updates") or []
+    if not updates:
+        return error_response("No price updates provided", 400)
+
+    store = resolve_store(data.get("store_sid"))
+    emp = resolve_employee(data.get("updated_by"))
+
+    with transaction.atomic():
+        pl = PriceLevel.objects.filter(price_lvl=1).first() or PriceLevel.objects.first()
+        for u in updates:
+            item = InvnSbsItem.objects.filter(item_sid=int(u["item_sid"])).first()
+            if not item:
+                continue
+            new_cost = round_money(u.get("cost") or 0)
+            new_price = round_money(u.get("retail_price") or 0)
+            if new_cost < 0 or new_price < 0:
+                return error_response(f"Prices for {item.description1} cannot be negative", 400)
+            item.cost = new_cost
+            item.save()
+            if pl:
+                InvnSbsPrice.objects.update_or_create(
+                    item=item, price_level=pl, defaults={"sbs": item.sbs, "price": new_price}
+                )
+
+        record_audit(
+            emp,
+            "DAILY_PRICES_UPDATED",
+            f"{len(updates)} SKUs",
+            f"Bulk updated daily purchase costs and selling prices for {len(updates)} products",
+            store=store,
+        )
+
+    qs = InvnSbsItem.objects.select_related("dcs", "vendor", "tax_code").prefetch_related(
+        "quantities", "prices__price_level"
+    )
+    return JsonResponse({"items": [serialize_catalog_item(i, store.store_sid) for i in qs]})
+
+
+def catalog_item_movements_view(request, item_sid: int):
+    ensure_seeded()
+    item = InvnSbsItem.objects.filter(item_sid=item_sid).first()
+    if not item:
+        return error_response("Product not found", 404)
+
+    events = []
+
+    # 1. Purchases (Receiving Vouchers)
+    vou_items = VouItem.objects.filter(item=item).select_related("voucher")
+    for vi in vou_items:
+        events.append(
+            {
+                "timestamp": vi.voucher.created_datetime,
+                "type": "Purchase",
+                "reference": vi.voucher.vou_no,
+                "stock_in": to_float(vi.qty),
+                "stock_out": 0.0,
+                "delta": to_float(vi.qty),
+            }
+        )
+
+    # 2. Sales & Returns (Documents)
+    doc_items = DocumentItem.objects.filter(item=item, document__is_held=False).select_related("document")
+    for di in doc_items:
+        is_rtn = di.document.receipt_type == 1
+        qty_f = to_float(di.qty)
+        events.append(
+            {
+                "timestamp": di.document.invc_post_date,
+                "type": "Return" if is_rtn else "Sale",
+                "reference": di.document.doc_no,
+                "stock_in": qty_f if is_rtn else 0.0,
+                "stock_out": 0.0 if is_rtn else qty_f,
+                "delta": qty_f if is_rtn else -qty_f,
+            }
+        )
+
+    # 3. Stock Adjustments
+    adj_items = AdjItem.objects.filter(item=item).select_related("adjustment")
+    for ai in adj_items:
+        diff_f = to_float(ai.diff_qty)
+        events.append(
+            {
+                "timestamp": ai.adjustment.created_datetime,
+                "type": "Adjustment",
+                "reference": ai.adjustment.adj_no,
+                "stock_in": diff_f if diff_f > 0 else 0.0,
+                "stock_out": abs(diff_f) if diff_f < 0 else 0.0,
+                "delta": diff_f,
+            }
+        )
+
+    events.sort(key=lambda e: e["timestamp"])
+    running_balance = 0.0
+    movements = []
+    for idx, ev in enumerate(events, start=1):
+        running_balance = round(running_balance + ev["delta"], 2)
+        movements.append(
+            {
+                "id": idx,
+                "date": ev["timestamp"].isoformat(),
+                "type": ev["type"],
+                "reference": ev["reference"],
+                "stockIn": ev["stock_in"] if ev["stock_in"] > 0 else 0,
+                "stockOut": ev["stock_out"] if ev["stock_out"] > 0 else 0,
+                "balance": running_balance,
+            }
+        )
+
+    movements.reverse()
+    return JsonResponse({"movements": movements})
 
 
 def catalog_lookup_view(request):
@@ -816,7 +981,7 @@ def catalog_adjustments_view(request):
                     emp,
                     "STOCK_UPDATED",
                     item.alu,
-                    f'Stock updated for "{item.description1}": {to_float(orig_q)} -> {to_float(new_q)}',
+                    f'Stock updated for "{item.description1}": {to_float(orig_q):g} -> {to_float(new_q):g}',
                     store=store,
                 )
 
@@ -866,7 +1031,7 @@ def documents_view(request):
                 | Q(bt_primary_phone_no__icontains=search)
             )
 
-        return JsonResponse({"documents": [serialize_document(d) for d in qs[:100]]})
+        return JsonResponse({"documents": [serialize_document(d) for d in qs[:200]]})
 
     if request.method == "POST":
         data = parse_json(request)
@@ -884,6 +1049,7 @@ def documents_view(request):
         is_held = bool(int(data.get("is_held") or 0))
         held_doc_sid = data.get("held_doc_sid")
         bt_cuid = data.get("bt_cuid")
+        custom_customer_name = str(data.get("customer_name") or "").strip()
         items_input = data.get("items") or []
         tenders_input = data.get("tenders") or []
 
@@ -899,6 +1065,13 @@ def documents_view(request):
                 if bt_cuid
                 else Customer.objects.filter(cust_id="CUST-001").first()
             ) or Customer.objects.first()
+
+            bt_first = customer.first_name if customer else "Walk-in"
+            bt_last = customer.last_name if customer else "Customer"
+            if custom_customer_name:
+                parts = custom_customer_name.split(" ", 1)
+                bt_first = parts[0]
+                bt_last = parts[1] if len(parts) > 1 else ""
 
             sale_subtotal = Decimal("0.00")
             line_discounts_total = Decimal("0.00")
@@ -1040,8 +1213,8 @@ def documents_view(request):
                 price_level=pl,
                 cashier=cashier,
                 customer=customer,
-                bt_first_name=customer.first_name if customer else "Walk-in",
-                bt_last_name=customer.last_name if customer else "Customer",
+                bt_first_name=bt_first,
+                bt_last_name=bt_last,
                 bt_primary_phone_no=customer.phone_no if customer else "",
                 sale_subtotal=sale_subtotal,
                 disc_perc=inv_disc_perc,
@@ -1123,6 +1296,14 @@ def documents_view(request):
                     "SALE_COMPLETED",
                     doc.doc_no,
                     f"Completed {tender_summary} sale of Rs. {to_float(transaction_total_amt):g} ({items_summary})",
+                    store=store,
+                )
+            else:
+                record_audit(
+                    cashier,
+                    "SALE_HELD",
+                    doc.doc_no,
+                    f"Held bill {doc.doc_no} of Rs. {to_float(transaction_total_amt):g} for later",
                     store=store,
                 )
 
@@ -1270,6 +1451,7 @@ def customer_history_view(request, cust_sid: int):
                 {
                     "doc_sid": d.doc_sid,
                     "doc_no": d.doc_no,
+                    "invc_post_date": d.invc_post_date.isoformat(),
                     "transaction_total_amt": to_float(d.transaction_total_amt),
                 }
                 for d in docs
@@ -1286,25 +1468,250 @@ def customer_credit_payment_view(request, cust_sid: int):
 @csrf_exempt
 def vendors_view(request):
     ensure_seeded()
-    vendors = Vendor.objects.filter(active=True)
-    return JsonResponse(
-        {
-            "vendors": [
-                {"vend_sid": v.vend_sid, "vend_code": v.vend_code, "vend_name": v.vend_name}
-                for v in vendors
-            ]
-        }
-    )
+    if request.method == "GET":
+        vendors = Vendor.objects.all()
+        return JsonResponse(
+            {
+                "vendors": [
+                    {
+                        "vend_sid": v.vend_sid,
+                        "vend_code": v.vend_code,
+                        "vend_name": v.vend_name,
+                        "contact_name": v.contact_name,
+                        "phone1": v.phone1,
+                        "address1": v.address1,
+                        "city": v.city,
+                        "payment_terms": v.payment_terms,
+                        "active": 1 if v.active else 0,
+                        "created_datetime": v.created_datetime.isoformat(),
+                        "purchases_count": v.vouchers.count(),
+                        "total_purchased": to_float(
+                            v.vouchers.aggregate(s=Sum("vou_total"))["s"] or Decimal("0.00")
+                        ),
+                    }
+                    for v in vendors
+                ]
+            }
+        )
+
+    if request.method == "POST":
+        data = parse_json(request)
+        vname = str(data.get("vend_name") or "").strip()
+        vcode = str(data.get("vend_code") or "").strip().upper()
+        if not vname:
+            return error_response("Supplier name is required", 400)
+        if not vcode:
+            vcode = f"SUP-{Vendor.objects.count() + 1:03d}"
+
+        if Vendor.objects.filter(vend_code__iexact=vcode).exists():
+            return error_response("A supplier with this code already exists", 409)
+
+        sbs = Subsidiary.objects.first()
+        v = Vendor.objects.create(
+            sbs=sbs,
+            vend_code=vcode,
+            vend_name=vname,
+            contact_name=str(data.get("contact_name") or "").strip(),
+            phone1=str(data.get("phone1") or "").strip(),
+            address1=str(data.get("address1") or "").strip(),
+            city=str(data.get("city") or "Lahore").strip(),
+            payment_terms=str(data.get("payment_terms") or "Cash").strip(),
+            active=bool(data.get("active", True)),
+        )
+        emp = resolve_employee(data.get("created_by"))
+        record_audit(emp, "SUPPLIER_ADDED", v.vend_code, f'Registered supplier "{v.vend_name}" ({v.phone1})')
+        return JsonResponse(
+            {
+                "vendor": {
+                    "vend_sid": v.vend_sid,
+                    "vend_code": v.vend_code,
+                    "vend_name": v.vend_name,
+                    "phone1": v.phone1,
+                    "address1": v.address1,
+                    "city": v.city,
+                    "active": 1 if v.active else 0,
+                }
+            },
+            status=201,
+        )
+
+    return error_response("Method not allowed", 405)
 
 
 @csrf_exempt
-def purchase_orders_view(request):
-    return JsonResponse({"purchaseOrders": []})
+def vendor_detail_view(request, vend_sid: int):
+    v = Vendor.objects.filter(vend_sid=vend_sid).first()
+    if not v:
+        return error_response("Supplier not found", 404)
+
+    if request.method == "PUT":
+        data = parse_json(request)
+        for field in ["vend_code", "vend_name", "contact_name", "phone1", "address1", "city", "payment_terms"]:
+            if field in data and data[field] is not None:
+                setattr(v, field, str(data[field]).strip())
+        if "active" in data:
+            v.active = bool(data["active"])
+        v.save()
+        emp = resolve_employee(data.get("updated_by"))
+        record_audit(emp, "SUPPLIER_UPDATED", v.vend_code, f'Updated supplier "{v.vend_name}"')
+        return JsonResponse({"vendor": {"vend_sid": v.vend_sid, "vend_code": v.vend_code, "vend_name": v.vend_name}})
+
+    if request.method == "PATCH":
+        data = parse_json(request)
+        v.active = bool(data.get("active", not v.active))
+        v.save()
+        emp = resolve_employee(data.get("updated_by"))
+        record_audit(
+            emp,
+            "SUPPLIER_STATUS",
+            v.vend_code,
+            f'{"Activated" if v.active else "Deactivated"} supplier "{v.vend_name}"',
+        )
+        return JsonResponse({"vend_sid": v.vend_sid, "active": 1 if v.active else 0})
+
+    return error_response("Method not allowed", 405)
 
 
 @csrf_exempt
 def vouchers_view(request):
-    return JsonResponse({"vouchers": []})
+    ensure_seeded()
+    if request.method == "GET":
+        store = resolve_store(request.GET.get("store_sid"))
+        vouchers = (
+            Voucher.objects.filter(store=store)
+            .select_related("vendor", "created_by")
+            .prefetch_related("items__item")[:150]
+        )
+        return JsonResponse(
+            {
+                "vouchers": [
+                    {
+                        "vou_sid": v.vou_sid,
+                        "vou_no": v.vou_no,
+                        "vend_sid": v.vendor_id,
+                        "vend_code": v.vendor.vend_code,
+                        "vend_name": v.vendor.vend_name,
+                        "vou_subtotal": to_float(v.vou_subtotal),
+                        "disc_amt": to_float(v.disc_amt),
+                        "vou_total": to_float(v.vou_total),
+                        "notes": v.notes,
+                        "created_by_name": v.created_by.full_name if v.created_by else "Admin",
+                        "created_datetime": v.created_datetime.isoformat(),
+                        "total_qty": to_float(sum((vi.qty for vi in v.items.all()), Decimal("0.00"))),
+                        "items": [
+                            {
+                                "vou_item_sid": vi.vou_item_sid,
+                                "item_pos": vi.item_pos,
+                                "item_sid": vi.item_id,
+                                "alu": vi.item.alu,
+                                "description1": vi.item.description1,
+                                "qty": to_float(vi.qty),
+                                "cost": to_float(vi.cost),
+                                "ext_cost": to_float(vi.ext_cost),
+                            }
+                            for vi in v.items.all()
+                        ],
+                    }
+                    for v in vouchers
+                ]
+            }
+        )
+
+    if request.method == "POST":
+        data = parse_json(request)
+        store = resolve_store(data.get("store_sid"))
+        vend_sid = data.get("vend_sid")
+        items = data.get("items") or []
+        disc_amt = round_money(data.get("disc_amt") or 0)
+        emp = resolve_employee(data.get("created_by"))
+
+        if not vend_sid or not items:
+            return error_response("Choose an active supplier and add at least one product line", 400)
+
+        vendor = Vendor.objects.filter(vend_sid=int(vend_sid)).first()
+        if not vendor:
+            return error_response("Selected supplier not found", 404)
+
+        with transaction.atomic():
+            vou_no = generate_doc_no("PUR", store.store_no, Voucher.objects.count() + 1)
+            vou = Voucher.objects.create(
+                vou_no=vou_no,
+                vou_type=0,
+                sbs=store.sbs,
+                store=store,
+                vendor=vendor,
+                disc_amt=disc_amt,
+                status=3,
+                notes=str(data.get("notes") or "").strip(),
+                created_by=emp,
+            )
+
+            subtotal = Decimal("0.00")
+            tot_qty = Decimal("0.00")
+            for idx, line in enumerate(items, start=1):
+                item = InvnSbsItem.objects.filter(item_sid=int(line["item_sid"])).first()
+                if not item:
+                    return error_response(f"Product {line.get('item_sid')} not found", 400)
+
+                qty = round_money(line.get("qty") or 1)
+                cost = round_money(line.get("cost") if line.get("cost") is not None else item.cost)
+                if qty <= 0 or cost < 0:
+                    return error_response("Quantity must be positive and purchase cost nonnegative", 400)
+
+                ext = round_money(qty * cost)
+                VouItem.objects.create(
+                    voucher=vou,
+                    item_pos=idx,
+                    item=item,
+                    qty=qty,
+                    orig_qty=qty,
+                    cost=cost,
+                    price=cost,
+                    ext_cost=ext,
+                )
+
+                qty_obj, _ = InvnSbsItemQty.objects.get_or_create(
+                    item=item, store=store, defaults={"qty": Decimal("0.00")}
+                )
+                qty_obj.qty = round_money(qty_obj.qty + qty)
+                qty_obj.rcvd_qty = round_money(qty_obj.rcvd_qty + qty)
+                qty_obj.save()
+
+                item.cost = cost
+                item.save()
+
+                subtotal = round_money(subtotal + ext)
+                tot_qty = round_money(tot_qty + qty)
+
+            vou.vou_subtotal = subtotal
+            vou.vou_total = max(Decimal("0.00"), round_money(subtotal - disc_amt))
+            vou.save()
+
+            record_audit(
+                emp,
+                "PURCHASE_RECORDED",
+                vou.vou_no,
+                f"Recorded purchase {vou.vou_no} from {vendor.vend_name} ({to_float(tot_qty):g} units, Total: Rs. {to_float(vou.vou_total):g})",
+                store=store,
+            )
+
+        return JsonResponse(
+            {
+                "voucher": {
+                    "vou_sid": vou.vou_sid,
+                    "vou_no": vou.vou_no,
+                    "vou_total": to_float(vou.vou_total),
+                }
+            },
+            status=201,
+        )
+
+    return error_response("Method not allowed", 405)
+
+
+@csrf_exempt
+def purchase_orders_view(request):
+    return vouchers_view(request)
 
 
 def register_status_view(request):
